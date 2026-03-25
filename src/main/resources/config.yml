@@ -1,0 +1,8 @@
+# EvenMoreFish Leaderboard 設定檔
+
+# 全息圖顯示位置（使用 /flb setpos 設定）
+hologram-location:
+  world: "world"
+  x: 0.0
+  y: 100.0
+  z: 0.0

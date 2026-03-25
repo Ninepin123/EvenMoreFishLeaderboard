@@ -1,0 +1,17 @@
+# Build
+target/
+temp/
+
+# IDE
+.idea/
+*.iml
+
+# Maven
+dependency-reduced-pom.xml
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Claude Code
+.claude/

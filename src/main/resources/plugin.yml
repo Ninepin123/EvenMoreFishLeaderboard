@@ -1,0 +1,25 @@
+
+name: evenMoreFishLeadboard
+version: ${project.version}
+main: me.ninepin.evenMoreFishLeadboard.EvenMoreFishLeadboard
+api-version: '1.21'
+author: ninepin
+depend:
+  - EvenMoreFish
+  - DecentHolograms
+
+commands:
+  fishleaderboard:
+    description: 釣魚競賽排行榜管理
+    usage: /<command> [setpos|status|listids|reload|help]
+    aliases: [flb, fishlb, emflb]
+
+permissions:
+  evenmorefish.leaderboard.setpos:
+    description: 允許設定全息圖位置
+    default: op
+  evenmorefish.leaderboard.admin:
+    description: 管理員權限
+    default: op
+    children:
+      evenmorefish.leaderboard.setpos: true
