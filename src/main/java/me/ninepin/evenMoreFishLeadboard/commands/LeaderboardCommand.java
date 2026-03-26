@@ -74,6 +74,7 @@ public class LeaderboardCommand implements CommandExecutor, TabCompleter {
                 }
                 plugin.reloadConfig();
                 plugin.getHologramManager().removeAllHolograms();
+                plugin.getHologramManager().showToAll();
                 player.sendMessage(ChatColor.GREEN + "排行榜插件已重新載入！");
             }
             case "help" -> sendHelp(player);

@@ -66,10 +66,13 @@ public class HologramManager {
         List<CompetitionInfo> competitions = getAllCompetitions();
         playerCompetitionList.put(player.getUniqueId(), competitions);
 
-        if (competitions.isEmpty()) return;
-
         String hologramName = getHologramName(player);
-        List<String> lines = buildMenuLines(competitions);
+        List<String> lines;
+        if (competitions.isEmpty()) {
+            lines = buildNoCompetitionLines();
+        } else {
+            lines = buildMenuLines(competitions);
+        }
         Hologram hologram = DHAPI.createHologram(hologramName, hologramLocation, false, lines);
         hologram.show(player, 0);
         playerHolograms.put(player.getUniqueId(), hologramName);
@@ -109,7 +112,7 @@ public class HologramManager {
 
     private void showAtIndex(Player player, int index) {
         List<CompetitionInfo> competitions = playerCompetitionList.get(player.getUniqueId());
-        if (competitions == null || competitions.isEmpty()) return;
+        if (competitions == null) return;
 
         Location hologramLocation = getHologramLocation();
         if (hologramLocation == null) return;
@@ -120,7 +123,9 @@ public class HologramManager {
         String hologramName = getHologramName(player);
 
         List<String> lines;
-        if (index == -1) {
+        if (competitions.isEmpty()) {
+            lines = buildNoCompetitionLines();
+        } else if (index == -1) {
             lines = buildMenuLines(competitions);
         } else if (index >= 0 && index < competitions.size()) {
             lines = buildCompetitionLines(competitions.get(index));
@@ -132,6 +137,15 @@ public class HologramManager {
         hologram.show(player, 0);
         playerHolograms.put(player.getUniqueId(), hologramName);
         playerCurrentIndex.put(player.getUniqueId(), index);
+    }
+
+    private List<String> buildNoCompetitionLines() {
+        List<String> lines = new ArrayList<>();
+        lines.add(ChatColor.GOLD + "=== " + ChatColor.YELLOW + "競賽列表" + ChatColor.GOLD + " ===");
+        lines.add(ChatColor.GRAY + "------------------------");
+        lines.add(ChatColor.RED + "暫無比賽");
+        lines.add(ChatColor.GRAY + "------------------------");
+        return lines;
     }
 
     private List<String> buildMenuLines(List<CompetitionInfo> competitions) {
@@ -245,10 +259,12 @@ public class HologramManager {
         if (hologram == null) return;
 
         List<CompetitionInfo> competitions = playerCompetitionList.get(player.getUniqueId());
-        if (competitions == null || competitions.isEmpty()) return;
+        if (competitions == null) return;
 
         List<String> lines;
-        if (currentIndex == -1) {
+        if (competitions.isEmpty()) {
+            lines = buildNoCompetitionLines();
+        } else if (currentIndex == -1) {
             lines = buildMenuLines(competitions);
         } else if (currentIndex >= 0 && currentIndex < competitions.size()) {
             lines = buildCompetitionLines(competitions.get(currentIndex));
