@@ -15,20 +15,21 @@ import org.bukkit.Location;
 import org.bukkit.entity.Player;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * 使用 DecentHolograms 原生多頁系統管理排行榜全息圖。
+ * Page 0 = 主選單（比賽列表），Page 1..N = 各比賽詳情。
+ * 所有玩家共用同一個全息圖，DH 原生追蹤每位玩家的當前頁面。
+ */
 public class HologramManager {
 
+    private static final String HOLOGRAM_NAME = "emf_leaderboard";
+
     private final EvenMoreFishLeadboard plugin;
-    private final Map<UUID, String> playerHolograms;
-    private final Map<UUID, List<CompetitionInfo>> playerCompetitionList;
-    private final Map<UUID, Integer> playerCurrentIndex;
+    private List<CompetitionInfo> competitions = new ArrayList<>();
 
     public HologramManager(EvenMoreFishLeadboard plugin) {
         this.plugin = plugin;
-        this.playerHolograms = new ConcurrentHashMap<>();
-        this.playerCompetitionList = new ConcurrentHashMap<>();
-        this.playerCurrentIndex = new ConcurrentHashMap<>();
     }
 
     public static class CompetitionInfo {
@@ -50,94 +51,144 @@ public class HologramManager {
         public int getDuration() { return duration; }
     }
 
-    private Location getHologramLocation() {
-        return plugin.getHologramLocation();
+    /**
+     * 建立或完整重建全息圖（含所有頁面）
+     */
+    public void createOrUpdateHologram() {
+        Location loc = plugin.getHologramLocation();
+        if (loc == null) return;
+
+        competitions = getAllCompetitions();
+
+        Hologram hologram = DHAPI.getHologram(HOLOGRAM_NAME);
+        if (hologram == null) {
+            hologram = DHAPI.createHologram(HOLOGRAM_NAME, loc, false);
+        }
+
+        // 清除舊的額外頁面（保留 page 0）
+        while (hologram.getPage(1) != null) {
+            hologram.removePage(1);
+        }
+
+        if (competitions.isEmpty()) {
+            // 只有一頁：無比賽提示
+            DHAPI.setHologramLines(hologram, buildNoCompetitionLines());
+        } else {
+            // Page 0 = 主選單
+            DHAPI.setHologramLines(hologram, buildMenuLines(competitions));
+            // Page 1..N = 各比賽詳情
+            for (CompetitionInfo info : competitions) {
+                DHAPI.addHologramPage(hologram, buildCompetitionLines(info));
+            }
+        }
     }
 
     /**
-     * 顯示全息圖給玩家（預設顯示主選單）
+     * 顯示全息圖給玩家（預設顯示主選單 page 0）
      */
     public void showToPlayer(Player player) {
-        Location hologramLocation = getHologramLocation();
-        if (hologramLocation == null) return;
-
-        removePlayerHologram(player);
-
-        List<CompetitionInfo> competitions = getAllCompetitions();
-        playerCompetitionList.put(player.getUniqueId(), competitions);
-
-        String hologramName = getHologramName(player);
-        List<String> lines;
-        if (competitions.isEmpty()) {
-            lines = buildNoCompetitionLines();
-        } else {
-            lines = buildMenuLines(competitions);
+        Hologram hologram = DHAPI.getHologram(HOLOGRAM_NAME);
+        if (hologram == null) {
+            createOrUpdateHologram();
+            hologram = DHAPI.getHologram(HOLOGRAM_NAME);
         }
-        Hologram hologram = DHAPI.createHologram(hologramName, hologramLocation, false, lines);
-        hologram.show(player, 0);
-        playerHolograms.put(player.getUniqueId(), hologramName);
-        playerCurrentIndex.put(player.getUniqueId(), -1);
+        if (hologram != null) {
+            hologram.show(player, 0);
+        }
     }
 
     /**
-     * 顯示全息圖給所有線上玩家
+     * 重建全息圖並顯示給所有線上玩家
      */
     public void showToAll() {
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            showToPlayer(player);
+        createOrUpdateHologram();
+        Hologram hologram = DHAPI.getHologram(HOLOGRAM_NAME);
+        if (hologram != null) {
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                hologram.show(player, 0);
+            }
         }
     }
 
     /**
-     * 點擊全息圖後切換到下一個比賽（循環）
+     * 點擊全息圖後切換到下一頁（循環：主選單 → 比賽1 → 比賽2 → ... → 主選單）
      */
     public void cycleToNext(Player player) {
-        List<CompetitionInfo> competitions = playerCompetitionList.get(player.getUniqueId());
-        if (competitions == null || competitions.isEmpty()) return;
+        Hologram hologram = DHAPI.getHologram(HOLOGRAM_NAME);
+        if (hologram == null) return;
 
-        int currentIndex = playerCurrentIndex.getOrDefault(player.getUniqueId(), -1);
-        int totalCompetitions = competitions.size();
+        int totalPages = hologram.size();
+        if (totalPages <= 1) return;
 
-        int nextIndex;
-        if (currentIndex < totalCompetitions - 1) {
-            nextIndex = currentIndex + 1;
-        } else {
-            nextIndex = -1;
-        }
-
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            showAtIndex(player, nextIndex);
-        }, 1L);
+        int currentPage = hologram.getPlayerPage(player);
+        int nextPage = (currentPage + 1) % totalPages;
+        hologram.show(player, nextPage);
     }
 
-    private void showAtIndex(Player player, int index) {
-        List<CompetitionInfo> competitions = playerCompetitionList.get(player.getUniqueId());
-        if (competitions == null) return;
+    /**
+     * 定時更新全息圖內容（由 HologramUpdateTask 每 2 ticks 呼叫）。
+     * 若比賽數量未變，只更新各頁文字內容（不動頁面結構，避免閃爍）。
+     * 若比賽數量改變，則完整重建。
+     */
+    public void updateHologram() {
+        Hologram hologram = DHAPI.getHologram(HOLOGRAM_NAME);
+        if (hologram == null) return;
 
-        Location hologramLocation = getHologramLocation();
-        if (hologramLocation == null) return;
+        List<CompetitionInfo> newCompetitions = getAllCompetitions();
+        int expectedPages = newCompetitions.isEmpty() ? 1 : newCompetitions.size() + 1;
 
-        removePlayerHologramKeepList(player);
-        playerCompetitionList.put(player.getUniqueId(), competitions);
-
-        String hologramName = getHologramName(player);
-
-        List<String> lines;
-        if (competitions.isEmpty()) {
-            lines = buildNoCompetitionLines();
-        } else if (index == -1) {
-            lines = buildMenuLines(competitions);
-        } else if (index >= 0 && index < competitions.size()) {
-            lines = buildCompetitionLines(competitions.get(index));
-        } else {
+        if (hologram.size() != expectedPages) {
+            // 比賽數量變了，完整重建並把所有人重設到主選單
+            competitions = newCompetitions;
+            createOrUpdateHologram();
+            hologram = DHAPI.getHologram(HOLOGRAM_NAME);
+            if (hologram != null) {
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    hologram.show(p, 0);
+                }
+            }
             return;
         }
 
-        Hologram hologram = DHAPI.createHologram(hologramName, hologramLocation, false, lines);
-        hologram.show(player, 0);
-        playerHolograms.put(player.getUniqueId(), hologramName);
-        playerCurrentIndex.put(player.getUniqueId(), index);
+        competitions = newCompetitions;
+
+        if (competitions.isEmpty()) {
+            DHAPI.setHologramLines(hologram, buildNoCompetitionLines());
+        } else {
+            // 更新 page 0（主選單）
+            DHAPI.setHologramLines(hologram, 0, buildMenuLines(competitions));
+            // 更新 page 1..N（各比賽詳情）
+            for (int i = 0; i < competitions.size(); i++) {
+                DHAPI.setHologramLines(hologram, i + 1, buildCompetitionLines(competitions.get(i)));
+            }
+        }
     }
+
+    /**
+     * 移除玩家的全息圖顯示（玩家離線時呼叫）
+     */
+    public void removePlayerHologram(Player player) {
+        Hologram hologram = DHAPI.getHologram(HOLOGRAM_NAME);
+        if (hologram != null) {
+            hologram.removeShowPlayer(player);
+        }
+    }
+
+    /**
+     * 移除整個全息圖
+     */
+    public void removeAllHolograms() {
+        DHAPI.removeHologram(HOLOGRAM_NAME);
+    }
+
+    /**
+     * 取得全息圖名稱（供 ClickListener 判斷用）
+     */
+    public String getHologramName() {
+        return HOLOGRAM_NAME;
+    }
+
+    // ==================== 頁面內容建構 ====================
 
     private List<String> buildNoCompetitionLines() {
         List<String> lines = new ArrayList<>();
@@ -164,6 +215,12 @@ public class HologramManager {
         }
 
         lines.add(ChatColor.GRAY + "------------------------");
+        if (competitions.size() > 1) {
+            lines.add(ChatColor.YELLOW + ChatColor.BOLD.toString() + "[ 點擊翻頁 ]  " +
+                    ChatColor.GRAY + "第 1/" + (competitions.size() + 1) + " 頁");
+        } else {
+            lines.add(ChatColor.YELLOW + ChatColor.BOLD.toString() + "[ 點擊翻頁 ]");
+        }
 
         return lines;
     }
@@ -179,14 +236,16 @@ public class HologramManager {
         lines.add(ChatColor.GOLD + "=== " + ChatColor.YELLOW + info.getName() + ChatColor.GOLD + " ===");
         lines.add(ChatColor.AQUA + "類型: " + ChatColor.WHITE + formatCompetitionType(info.getType()));
 
-        if (isActive && activeCompetition != null) {
+        if (isActive) {
             lines.add(ChatColor.GREEN + "狀態: " + ChatColor.BOLD + "進行中");
             lines.add(ChatColor.AQUA + "剩餘時間: " + ChatColor.WHITE + formatTime(activeCompetition.getTimeLeft()));
             lines.add(ChatColor.GRAY + "------------------------");
 
-            List<CompetitionEntry> entries = activeCompetition.getLeaderboard().getEntries();
+            List<CompetitionEntry> entries = activeCompetition.getLeaderboard() != null
+                    ? activeCompetition.getLeaderboard().getEntries()
+                    : new ArrayList<>();
 
-            if (entries.isEmpty()) {
+            if (entries == null || entries.isEmpty()) {
                 lines.add(ChatColor.RED + "暫無參賽者");
             } else {
                 int displayCount = Math.min(entries.size(), 10);
@@ -210,10 +269,12 @@ public class HologramManager {
         }
 
         lines.add(ChatColor.GRAY + "------------------------");
-        lines.add(ChatColor.DARK_GRAY + "點擊切換下一個");
+        lines.add(ChatColor.YELLOW + ChatColor.BOLD.toString() + "[ 點擊翻頁 ]");
 
         return lines;
     }
+
+    // ==================== 工具方法 ====================
 
     private List<CompetitionInfo> getAllCompetitions() {
         List<CompetitionInfo> list = new ArrayList<>();
@@ -248,63 +309,6 @@ public class HologramManager {
         return ChatColor.GRAY + "○";
     }
 
-    public void updatePlayerHologram(Player player) {
-        String hologramName = playerHolograms.get(player.getUniqueId());
-        if (hologramName == null) return;
-
-        Integer currentIndex = playerCurrentIndex.get(player.getUniqueId());
-        if (currentIndex == null) return;
-
-        Hologram hologram = DHAPI.getHologram(hologramName);
-        if (hologram == null) return;
-
-        List<CompetitionInfo> competitions = playerCompetitionList.get(player.getUniqueId());
-        if (competitions == null) return;
-
-        List<String> lines;
-        if (competitions.isEmpty()) {
-            lines = buildNoCompetitionLines();
-        } else if (currentIndex == -1) {
-            lines = buildMenuLines(competitions);
-        } else if (currentIndex >= 0 && currentIndex < competitions.size()) {
-            lines = buildCompetitionLines(competitions.get(currentIndex));
-        } else {
-            return;
-        }
-
-        DHAPI.setHologramLines(hologram, lines);
-    }
-
-    private void removePlayerHologramKeepList(Player player) {
-        String hologramName = playerHolograms.remove(player.getUniqueId());
-        if (hologramName != null) {
-            DHAPI.removeHologram(hologramName);
-        }
-        playerCurrentIndex.remove(player.getUniqueId());
-    }
-
-    public void removePlayerHologram(Player player) {
-        String hologramName = playerHolograms.remove(player.getUniqueId());
-        if (hologramName != null) {
-            DHAPI.removeHologram(hologramName);
-        }
-        playerCurrentIndex.remove(player.getUniqueId());
-        playerCompetitionList.remove(player.getUniqueId());
-    }
-
-    public void removeAllHolograms() {
-        for (String name : playerHolograms.values()) {
-            DHAPI.removeHologram(name);
-        }
-        playerHolograms.clear();
-        playerCurrentIndex.clear();
-        playerCompetitionList.clear();
-    }
-
-    private String getHologramName(Player player) {
-        return "emf_lb_" + player.getUniqueId().toString().substring(0, 8);
-    }
-
     private String formatCompetitionType(CompetitionType type) {
         return switch (type) {
             case LARGEST_FISH -> "最大魚";
@@ -334,6 +338,7 @@ public class HologramManager {
     }
 
     private String formatValue(CompetitionEntry entry, CompetitionType type) {
+        if (entry == null) return "0";
         float value = entry.getValue();
         return switch (type) {
             case LARGEST_FISH, SHORTEST_FISH, LARGEST_TOTAL, SHORTEST_TOTAL ->
