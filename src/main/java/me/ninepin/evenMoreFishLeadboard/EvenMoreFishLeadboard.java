@@ -43,19 +43,17 @@ public final class EvenMoreFishLeadboard extends JavaPlugin {
         updateTask = new HologramUpdateTask(this, hologramManager);
         updateTask.runTaskTimer(this, 2L, 2L);
 
-        // 註冊事件監聽器
+        // 註冊事件監聯器
         getServer().getPluginManager().registerEvents(new CompetitionListener(this), this);
-        getServer().getPluginManager().registerEvents(new HologramClickListener(this, hologramManager), this);
+        getServer().getPluginManager().registerEvents(new HologramClickListener(hologramManager), this);
 
         // 註冊命令
         LeaderboardCommand command = new LeaderboardCommand(this);
         getCommand("fishleaderboard").setExecutor(command);
         getCommand("fishleaderboard").setTabCompleter(command);
 
-        // 預設顯示給所有線上玩家
-        for (Player player : Bukkit.getOnlinePlayers()) {
-            hologramManager.showToPlayer(player);
-        }
+        // 建立全息圖並顯示給所有線上玩家
+        hologramManager.showToAll();
 
         getLogger().info("EvenMoreFish Leaderboard 插件已啟用！");
     }
